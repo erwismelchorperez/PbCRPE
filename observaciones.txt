@@ -1,0 +1,55 @@
+Pattern,negative Count,negative Support,positive Count,positive Support
+[A14 > 4209] ∧ [A3 <= 7.5] ∧ [A2 <= 28.40942840280069],0,0.0,10,0.032679738562091505
+[A14 > 4209] ∧ [A3 <= 7.5] ∧ [A2 > 28.40942840280069],1,0.0032679738562091504,9,0.029411764705882353
+
+Estos dos patrones al parecer no nos dice nada o son similares, porque la condición de las características A14 y A3 se carga a la clase positiva independientemente del valor que pueda tener A2
+
+
+""" 
+C=0.01 con este valor se obtiene
+    [[61 16]
+    [ 5 56]]
+    Accuracy:         0.8478
+    Precision:        0.8595
+    Recall:           0.8478
+    F1-Score:         0.8483
+    Matthews:         0.7061
+    AUC:              0.8906
+    ErrorRateI:       0.2078
+    ErrorRateII:      0.082
+
+C=0.003, 0.002
+    [[64 13]
+    [ 7 54]]
+    Accuracy:         0.8551
+    Precision:        0.8592
+    Recall:           0.8551
+    F1-Score:         0.8555
+    Matthews:         0.7119
+    AUC:              0.8929
+    ErrorRateI:       0.1688
+    ErrorRateII:      0.1148
+C=0.005
+    [[62 15]
+    [ 5 56]]
+    Accuracy:         0.8551
+    Precision:        0.865
+    Recall:           0.8551
+    F1-Score:         0.8555
+    Matthews:         0.7187
+    AUC:              0.9137
+    ErrorRateI:       0.1948
+    ErrorRateII:      0.082
+C=0.007, 0.008
+    [[62 15]
+    [ 5 56]]
+    Accuracy:         0.8551
+    Precision:        0.865
+    Recall:           0.8551
+    F1-Score:         0.8555
+    Matthews:         0.7187
+    AUC:              0.9137
+    ErrorRateI:       0.1948
+    ErrorRateII:      0.082
+
+"""

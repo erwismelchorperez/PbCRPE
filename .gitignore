@@ -1,0 +1,30 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+.env/
+__pycache__/
+*.pyc
+
+# Datos (incluye CSV)
+*.csv
+*.xlsx
+*.json
+*.pkl
+*.db
+*.sqlite
+data/
+
+# Editores
+.vscode/
+.idea/
+.DS_Store
+
+# Sensible
+.env
+secrets.py
+*.key
+*.pem
+
+# Logs
+*.log
