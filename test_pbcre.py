@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
 
     cl_metrics = ClassificationMetrics()
-    namedataset = 'aer'# australian, aer, german, hmeq, crx, gmsc, heloc, loan_data_set, data-eiz-categorica
+    namedataset = 'german'# australian, aer, german, hmeq, crx, gmsc, heloc, loan_data_set, data-eiz-categorica
     proccessdata = ProccessData(namedataset)
     proccessdata.ReadDataset()
     proccessdata.SplitDataset()
