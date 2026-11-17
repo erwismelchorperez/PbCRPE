@@ -1,11 +1,11 @@
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
 
 from .hybrid_twoing_functional import HybridTwoingFunctionalCriterion
 class HybridTwoingFunctionalCriterionFast(HybridTwoingFunctionalCriterion):
-
     def __init__(self,alpha=0.5,beta=0.05,logistic_C=0.005,logistic_solver="liblinear",logistic_max_iter=200,n_quantiles=7,twoing_threshold=0.01,max_logistic_samples=500):
         super().__init__(alpha=alpha,beta=beta,logistic_C=logistic_C,logistic_solver=logistic_solver,logistic_max_iter=logistic_max_iter)
 
@@ -40,14 +40,13 @@ class HybridTwoingFunctionalCriterionFast(HybridTwoingFunctionalCriterion):
             X_tr,X_val,y_tr,y_val = train_test_split(X_enc,y,test_size=0.3,stratify=y,random_state=42)
             model.fit(X_tr,y_tr)
             y_pred = model.predict(X_val)
-            score = f1_score(y_val,y_pred,average="weighted")
-            #score = f1_score(y_val,y_pred,average="macro")
-
+            score = f1_score(y_val,y_pred,average="weighted")#primera versión
+            #score = f1_score(y_val,y_pred,average="macro", zero_division=0)#segunda versión
         else:
             model.fit(X_enc,y)
             y_pred = model.predict(X_enc)
-            score = f1_score(y,y_pred,average="weighted")
-            #score = f1_score(y,y_pred,average="macro")
+            score = f1_score(y,y_pred,average="weighted")#primera versión
+            #score = f1_score(y,y_pred,average="macro", zero_division=0)# segunda version
 
         return score,model
     def best_split(self, X, y, min_samples_leaf):
@@ -63,19 +62,18 @@ class HybridTwoingFunctionalCriterionFast(HybridTwoingFunctionalCriterion):
 
         for feat in range(X.shape[1]):
             col = X.iloc[:, feat].values
-            if np.issubdtype(col.dtype, np.number):
+            if pd.api.types.is_numeric_dtype(col):
                 quantiles = np.linspace(0.1,0.9,self.n_quantiles)
                 thresholds = np.unique(np.quantile(col,quantiles))
 
             else:
-
                 thresholds = np.unique(col)
 
             for thr in thresholds:
 
                 mask = (
                     col <= thr
-                    if np.issubdtype(col.dtype, np.number)
+                    if pd.api.types.is_numeric_dtype(col)
                     else col == thr
                 )
 
@@ -101,12 +99,12 @@ class HybridTwoingFunctionalCriterionFast(HybridTwoingFunctionalCriterion):
                 score_l, model_l = self._logistic_score(X_l,y_l,min_samples_leaf)
                 score_r, model_r = self._logistic_score(X_r,y_r,min_samples_leaf)
 
-                #func_score = (len(y_l) * score_l + len(y_r) * score_r) / (len(y_l) + len(y_r))
-                
+                #func_score = (len(y_l) * score_l + len(y_r) * score_r) / (len(y_l) + len(y_r))# primera versión
+                # segunda versión
                 purity_l = np.max(np.bincount(y_l))/len(y_l)
                 purity_r = np.max(np.bincount(y_r))/len(y_r)
                 func_score = (len(y_l)*score_l*purity_l + len(y_r)*score_r*purity_r) / (len(y_l)+len(y_r))
-                
+                # segunda versión
 
                 scores_twoing.append(twoing)
                 scores_func.append(func_score)
@@ -137,7 +135,8 @@ class HybridTwoingFunctionalCriterionFast(HybridTwoingFunctionalCriterion):
                 else 0.0
             )
 
-            score = (self.beta * twoing_n + (1 - self.beta) * ( self.alpha * func_n ))
+            score = (self.beta * twoing_n + (1 - self.beta) * ( self.alpha * func_n ))#primera versión
+            #score = (self.beta * twoing_n+ (1 - self.beta) * func_n)#segunda versión
 
             if score > best_score:
 

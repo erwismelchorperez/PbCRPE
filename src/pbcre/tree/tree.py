@@ -52,6 +52,11 @@ class PBCRETree:
         self.nodes_ = {}
         self.root = self._build_tree(X, y, depth=0)
         self.n_samples_ = len(y)   # 🔥 agregar esto
+        # agregue lo del tipo de variable
+        self.feature_dtypes = [
+            pd.api.types.is_numeric_dtype(X.iloc[:, i])
+            for i in range(X.shape[1])
+        ]
     def _build_tree(self, X, y, depth):
         node = PBCRENode(node_id=self.node_count, depth=depth)
         self.nodes_[node.node_id] = node
@@ -76,7 +81,15 @@ class PBCRETree:
         if feat is None:
             return node
 
-        mask = X.iloc[:, feat] <= thr
+        #mask = X.iloc[:, feat] <= thr# reemplace esto por lo que esta en el bloque de ###
+        #######
+        col = X.iloc[:, feat]
+
+        if pd.api.types.is_numeric_dtype(col):
+            mask = col <= thr
+        else:
+            mask = col == thr
+        ########
 
         if mask.sum() < self.min_samples_leaf or (~mask).sum() < self.min_samples_leaf:
             return node
@@ -97,8 +110,20 @@ class PBCRETree:
             #return node.predicted_class
             prob = node.class_counts[1] / node.class_counts.sum()
             return int(prob >= node.leaf_threshold)
-
+        """
+        # cambie este bloque por lo siguiente
         if x[node.split_feature] <= node.threshold:
+            return self.predict_one(x, node.left)
+        else:
+            return self.predict_one(x, node.right)
+        """
+        value = x[node.split_feature]
+        if isinstance(node.threshold, str):
+            go_left = value == node.threshold
+        else:
+            go_left = value <= node.threshold
+
+        if go_left:
             return self.predict_one(x, node.left)
         else:
             return self.predict_one(x, node.right)
@@ -121,7 +146,19 @@ class PBCRETree:
             x = X[i]
 
             while not node.is_leaf:
+                """
+                #cambie este bloque por lo sigueinte
                 if x[node.split_feature] <= node.threshold:
+                    node = node.left
+                else:
+                    node = node.right
+                """
+                if isinstance(node.threshold, str):
+                    go_left = x[node.split_feature] == node.threshold
+                else:
+                    go_left = x[node.split_feature] <= node.threshold
+
+                if go_left:
                     node = node.left
                 else:
                     node = node.right
@@ -260,7 +297,7 @@ class PBCRETree:
 
             fpr, tpr, thr = roc_curve(y_leaf, p_leaf)
             node.leaf_threshold = thr[np.argmax(tpr - fpr)]
-    def extract_cips(self, min_samples=5, min_confidence=0.6):
+    def extract_cips(self, min_samples=5, min_confidence=0.6):# min_confidence=0.6
         cips = []
 
         def dfs(node, path):
@@ -297,8 +334,20 @@ class PBCRETree:
                 })
 
             if not node.is_leaf:
+                """
+                # cambie esto por lo siguiente
                 dfs(node.left,  path + [(node.split_feature, "<=", node.threshold)])
                 dfs(node.right, path + [(node.split_feature, ">",  node.threshold)])
+                """
+                if self.feature_dtypes[node.split_feature]:
+                    left_condition = (node.split_feature,"<=",node.threshold)
+                    right_condition = (node.split_feature,">",node.threshold)
+                else:
+                    left_condition = (node.split_feature,"=",node.threshold)
+                    right_condition = (node.split_feature,"!=",node.threshold)
+
+                dfs(node.left,path + [left_condition])
+                dfs(node.right,path + [right_condition])
 
         dfs(self.root, [])
         return cips
@@ -399,25 +448,42 @@ class PBCRETree:
                     if use_depth:
                         weight*=( 1+ depth_lambda * ( cip.get("depth",1) / max_depth ))
 
-                    positive_boost=0.6
+                    positive_boost=0.8#0.6
                     if cls==1:
                         weight*=positive_boost
 
                     scores[cls]=scores.get(cls,0)+weight
-                    #print(x,"             ", "  ", weight," \n ", cip)
-                    """probs=cip["class_prob"]
-
-                    scores[0]=(scores.get(0,0) + weight*probs[0] )
-                    scores[1]=(scores.get(1,0) + weight*probs[1])"""
+                    if cls == 1:
+                        print(f"Clase 1: peso acumulado = {scores[cls]:.6f}")
 
             if matched:
-                pred=max(scores,key=scores.get)
+                if not hasattr(self, "_score_diagnostics"):
+                    self._score_diagnostics = {
+                        "ambas_clases": 0,
+                        "solo_clase_0": 0,
+                        "solo_clase_1": 0
+                    }
 
+                if 0 in scores and 1 in scores:
+                    self._score_diagnostics["ambas_clases"] += 1
+                elif 0 in scores:
+                    self._score_diagnostics["solo_clase_0"] += 1
+                elif 1 in scores:
+                    self._score_diagnostics["solo_clase_1"] += 1
+
+                pred = max(scores, key=scores.get)
+            elif default_strategy == "tree":
+                pred = self.predict_one(x)
+            else:
+                pred = 0
+            """
+            if matched:
+                pred=max(scores,key=scores.get)
             elif default_strategy=="tree":
                 pred=self.predict_one(x)
-
             else:
                 pred=0
+            """
 
             predictions.append(pred)
 
@@ -769,25 +835,38 @@ class PBCRETree:
     def _match_path(self, x, path):
         for feat, op, thr in path:
             x_val = x[feat]
-
             # CATEGÓRICO
             if isinstance(thr, str):
-                if op == "=" and x_val != thr:
-                    return False
-                if op == "!=" and x_val == thr:
-                    return False
+                if op == "=":
+                    if x_val != thr:
+                        return False
+                elif op == "!=":
+                    if x_val == thr:
+                        return False
+                elif op in ("<=", ">"):
+                    raise ValueError(
+                        f"Categorical comparison not implemented: "
+                        f"value={x_val!r}, "
+                        f"op={op!r}, "
+                        f"threshold={thr!r}"
+                    )
+                else:
+                    raise ValueError(f"Unknown operator: {op!r}")
 
             # NUMÉRICO
             else:
                 try:
                     x_val = float(x_val)
-                except:
+                except (TypeError, ValueError):
                     return False
-
-                if op == "<=" and not (x_val <= thr):
-                    return False
-                if op == ">" and not (x_val > thr):
-                    return False
+                if op == "<=":
+                    if not (x_val <= thr):
+                        return False
+                elif op == ">":
+                    if not (x_val > thr):
+                        return False
+                else:
+                    raise ValueError(f"Unknown operator for numeric feature: {op!r}" )
 
         return True
     def print_tree(self, node=None, depth=0):
