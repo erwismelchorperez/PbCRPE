@@ -108,7 +108,8 @@ class HybridTwoingFunctionalCriterion(SplitCriterion):
 
                 mask = (
                     col <= thr
-                    if np.issubdtype(col.dtype, np.number)
+                    #if np.issubdtype(col.dtype, np.number)
+                    if pd.api.types.is_numeric_dtype(col)
                     else col == thr
                 )
 

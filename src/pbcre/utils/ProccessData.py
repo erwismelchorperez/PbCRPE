@@ -28,6 +28,8 @@ class ProccessData:
     def BalancedDataset(self):
         # Inicializar SMOTENC indicando las columnas categóricas
         print("Balanced", len(self.X_train))
+        self.y_train = self.y_train.astype(int)# se convierte el y_train en enteros porque lo regresaba como objetos
+        self.y_test = self.y_test.astype(int)
         if len(self.categorical_features) == 0:
             # Aplicar SMOTE para balancear
             smote = SMOTE(random_state=42)

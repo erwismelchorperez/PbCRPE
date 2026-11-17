@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
 
     cl_metrics = ClassificationMetrics()
-    namedataset = 'german'# australian, aer, german, hmeq, crx, gmsc, heloc, loan_data_set, data-eiz-categorica
+    namedataset = 'default+of+credit+card+clients'# australian, aer, german, hmeq, crx, gmsc, heloc, loan_data_set, data-eiz-categorica
     proccessdata = ProccessData(namedataset)
     proccessdata.ReadDataset()
     proccessdata.SplitDataset()
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     """ Primera versión """
     #tree = PBCRETree(max_depth=100, min_samples_leaf=10, criterion="hybrid")
     """ Segunda versión """
-    tree = PBCRETree(criterion="hybrid_fast",max_depth=100,min_samples_leaf=10,alpha=0.5,beta=0.5)
+    tree = PBCRETree(criterion="hybrid_fast",max_depth=100,min_samples_leaf=10,alpha=0.5,beta=0.5)#hybrid_fast,hybrid_stable
 
     tree.fit(proccessdata.getXtrain(), proccessdata.getytrain() )
     tree.print_tree()
@@ -202,3 +202,132 @@ if __name__ == "__main__":
                 str(cl_metrics.confusion_matrix(proccessdata.getytest(), y_predict))
             ]], columns=col_rendi)
     rendimiento.to_csv("./rendimiento_ft4cip.csv", index=False)
+    """
+    #Prueba
+    print("\n=== CLASS DISTRIBUTION ===")
+    print("y_train:")
+    print(pd.Series(proccessdata.getytrain()).value_counts())
+
+    print("y_test:")
+    print(pd.Series(proccessdata.getytest()).value_counts())
+
+    print("\n=== TREE ===")
+    y_pred_tree = tree.predict(proccessdata.getXtest())
+    print(np.unique(y_pred_tree, return_counts=True))
+
+    print("\n=== CIPS ===")
+    print("Total:", len(cips))
+    print(
+        pd.Series([c["class"] for c in cips])
+        .value_counts()
+    )
+
+    print("\n=== CIPS PREDICTION ===")
+    y_pred_cips = tree.predict_with_cips(
+        proccessdata.getXtest(),
+        cips
+    )
+    print(np.unique(y_pred_cips, return_counts=True))
+
+    print("\n=== WEIGHTED CIPS ===")
+    y_pred_weighted = tree.predict_with_cips_weighted(
+        proccessdata.getXtest(),
+        cips
+    )
+    print(np.unique(y_pred_weighted, return_counts=True))
+    """
+    """
+    print("\n=== CIP COVERAGE ===")
+    for i, x in enumerate(proccessdata.getXtest().values):
+
+        matched = []
+
+        for j, cip in enumerate(cips):
+            if tree._match_path(x, cip["path"]):
+                matched.append({
+                    "cip": j,
+                    "class": cip["class"],
+                    "support": cip["support"],
+                    "confidence": cip["confidence"],
+                    "depth": cip["depth"],
+                    "path": cip["path"]
+                })
+
+        print(f"\nInstance {i}")
+        print(f"Actual class: {proccessdata.getytest().iloc[i]}")
+        print(f"Number of CIPs: {len(matched)}")
+
+        for m in matched:
+            print(
+                f"  CIP {m['cip']} | "
+                f"class={m['class']} | "
+                f"support={m['support']:.4f} | "
+                f"confidence={m['confidence']:.4f} | "
+                f"depth={m['depth']} | "
+                f"path={m['path']}"
+            )
+    """
+    """
+    # esto es solo para la base de datos Alemana (German dataset)
+    print("\n=== CIP COVERAGE: INSTANCE 199 ===")
+
+    instance_idx = 199
+
+    X_test = proccessdata.getXtest()
+    y_test = proccessdata.getytest()
+
+    # Obtener instancia y clase real
+    x = X_test.iloc[instance_idx]
+    y_true = y_test.iloc[instance_idx]
+
+    print(f"\nInstance: {instance_idx}")
+    print(f"Actual class: {y_true}")
+
+    print("\n=== INSTANCE VALUES ===")
+    for feature_idx, value in enumerate(x):
+        print(f"Feature {feature_idx}: {value}")
+
+    matched = []
+    
+    print("\n=== MATCHED CIPS ===")
+
+    for j, cip in enumerate(cips):
+
+        matched_cip = tree._match_path(
+            x.values,
+            cip["path"]
+        )
+
+        if matched_cip:
+
+            matched.append({
+                "cip": j,
+                "class": cip["class"],
+                "support": cip["support"],
+                "confidence": cip["confidence"],
+                "depth": cip["depth"],
+                "path": cip["path"]
+            })
+
+            print(
+                f"\nCIP {j}"
+                f"\n  class      : {cip['class']}"
+                f"\n  support    : {cip['support']:.4f}"
+                f"\n  confidence : {cip['confidence']:.4f}"
+                f"\n  depth      : {cip['depth']}"
+                f"\n  path       : {cip['path']}"
+            )
+
+    print("\n=== SUMMARY ===")
+    print(f"Actual class       : {y_true}")
+    print(f"Number of CIPs     : {len(matched)}")
+
+    if matched:
+        class_0 = sum(cip["class"] == 0 for cip in matched)
+        class_1 = sum(cip["class"] == 1 for cip in matched)
+
+        print(f"CIPs class 0       : {class_0}")
+        print(f"CIPs class 1       : {class_1}")
+    else:
+        print("No CIPs matched.")
+    """

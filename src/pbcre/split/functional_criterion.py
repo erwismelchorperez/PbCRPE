@@ -42,6 +42,10 @@ class FunctionalCriterion(SplitCriterion):
             Entrena modelo funcional local si es posible.
             Devuelve (score, model) o (0.0, None)
         """
+        print("DEBUG _logistic_score")
+        print("y original:", np.unique(y, return_counts=True))
+        print("y_train:", np.unique(y_tr, return_counts=True))
+        print("y_train dtype:", y_tr.dtype)
         # 🚫 nodo no separable
         if len(y) < 2 * min_samples_leaf or len(np.unique(y)) < 2:
             return 0.0, None

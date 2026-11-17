@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score
@@ -127,7 +128,8 @@ class HybridTwoingFunctionalCriterionStable(HybridTwoingFunctionalCriterion):
 
             col = X.iloc[:, feat].values
 
-            if np.issubdtype(col.dtype, np.number):
+            #if np.issubdtype(col.dtype, np.number):
+            if pd.api.types.is_numeric_dtype(col):
                 quantiles = np.linspace(0.1, 0.9, self.n_quantiles)
                 thresholds = np.unique(np.quantile(col, quantiles))
             else:
@@ -137,7 +139,8 @@ class HybridTwoingFunctionalCriterionStable(HybridTwoingFunctionalCriterion):
 
                 mask = (
                     col <= thr
-                    if np.issubdtype(col.dtype, np.number)
+                    #if np.issubdtype(col.dtype, np.number)
+                    if pd.api.types.is_numeric_dtype(col)
                     else col == thr
                 )
 
