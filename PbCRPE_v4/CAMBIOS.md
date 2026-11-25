@@ -1,0 +1,331 @@
+# PbCRPE_v1 — Registro de cambios
+
+Objetivo: reducir el **error tipo II (FNR)** sin sacrificar el **error tipo I (FPR)**,
+usando el **Balanced Error Rate** (BER = (FPR + FNR) / 2) como guía.
+
+Relación usada en todo el proyecto: `Youden J = TPR − FPR = 1 − 2·BER`.
+Maximizar Youden es minimizar el BER.
+
+## Estructura
+
+```
+PbCRPE_v1/
+├── run_experiment.py        # NUEVO: comparación de estrategias (CV)
+├── run_final.py             # NUEVO: resultado final único + patrones
+├── CAMBIOS.md
+└── srcc/pbcre/
+    ├── evaluation/metrics.py      # reescrito
+    ├── evaluation/thresholds.py   # NUEVO: select_threshold
+    ├── tree/tree.py               # modificado
+    ├── split/*.py                 # modificados
+    ├── tuning/cv_utils.py         # NUEVO: CV compartida
+    ├── tuning/*.py                # modificados
+    └── utils/ProccessData.py      # modificado
+```
+
+Las importaciones siguen siendo `srcc.pbcre...`; ejecute los scripts desde `PbCRPE_v1/`.
+
+## 1. Errores corregidos
+
+| Archivo | Problema | Corrección |
+|---|---|---|
+| `tree.py` `fit_leaf_thresholds` | `roc_curve` sobre una puntuación constante devolvía umbral `+inf`: la hoja nunca predecía 1 | Obsoleto; delega en `fit_threshold` (umbral global) |
+| `tree.py` `predict_proba` | El suavizado de Laplace usaba `alpha`, el mismo peso del criterio híbrido | Nuevo parámetro `laplace=1.0` |
+| `metrics.py` | `confusion_matrix(...).ravel()` fallaba con una sola clase | `labels=[0, 1]` en todas las métricas |
+| `metrics.py` / poda / split | El BER (menor es mejor) se usaba donde el código maximiza | `balanced_accuracy = 1 − BER`; `greater_is_better` en el tuning |
+| `hybrid_stable.py` | La caché usaba `(n_muestras, clases)`: subconjuntos distintos compartían score | Clave = hash del contenido `(X_enc, y)` |
+| `hybrid_stable.py` | `len(np.unique(y)) < cv_folds` siempre verdadero: la CV nunca corría | Se usa el tamaño de la clase minoritaria |
+| `functional_criterion.py` | `print` de depuración con `y_tr` sin definir (`NameError`) | Eliminados |
+| `hybrid_twoing_functional.py` | `alpha` se aplicaba dos veces (`alpha²`) | Se aplica una vez (`_combine`) |
+| `hybrid_fast.py` | `np.random.choice` sin semilla: árboles distintos en cada corrida | Generador con `random_state`, reiniciado en cada `fit` |
+| `gini.py` | Devolvía 3 valores en vez de 4 | Devuelve `(feat, thr, score, None)` |
+
+## 2. Sesgos hacia la clase mayoritaria reducidos
+
+- **Score funcional**: `scoring="balanced"` (1 − BER) por defecto en todos los criterios
+  híbridos. Las opciones `"f1"` y `"f1_weighted"` siguen disponibles.
+- **Pureza** (`hybrid_fast`): `purity_mode="balanced"` repondera por el prior de la raíz;
+  vale 0.5 si el nodo reproduce el prior. `"majority"` = original.
+- **Umbrales numéricos** (`hybrid_fast`): `class_quantiles=True` añade cuantiles de la clase
+  positiva (incluyendo las colas 0.05–0.95).
+- **Logística local**: `class_weight="balanced"` también en el criterio `hybrid`.
+- **Split híbrido**: el score funcional es un promedio ponderado por tamaño en vez de una suma.
+
+## 3. Umbral de decisión global
+
+```python
+model.fit_threshold(X_val, y_val, fpr_max=None)       # mínimo BER (Youden)
+model.fit_threshold(X_val, y_val, fpr_max=0.05)       # mínimo FNR con FPR <= 0.05
+model.fit_threshold(X_val, y_val, fpr_max="current")  # mínimo FNR sin superar el FPR actual
+model.predict(X_test)                                  # usa model.threshold_
+```
+
+Siempre con validación, nunca con el test final.
+
+## 4. Poda
+
+`cost_complexity_pruning(X_val, y_val, metric="auc" | "balanced", tol=0.0)`.
+En cada ronda evalúa todas las podas y aplica la de mayor ganancia por hoja; acepta
+empates (prefiere el árbol más simple). `"balanced"` usa el máximo 1 − BER alcanzable
+con algún umbral, así que es independiente del umbral y está alineada con el BER.
+
+## 5. CIPs
+
+- `extract_cips(class_mode="balanced", min_lift=None)`: la clase del CIP es la que más se
+  enriquece respecto al prior. Cada CIP incluye `class_support`, `lift` y
+  `balanced_confidence`.
+- `predict_with_cips`: los empates los decide el árbol (antes: clase 0).
+- `predict_with_cips_weighted(..., support_mode="class")`: soporte relativo a cada clase.
+- NUEVO: `cip_scores`, `fit_cip_threshold`, `predict_with_cips_scored`: puntuación continua
+  más umbral con restricción de FPR. `tree_smoothing` desempata con la probabilidad del árbol.
+
+## 6. Tuning
+
+- `sampler`: SMOTE/SMOTENC aplicado **dentro** de cada fold (`ProccessData.build_sampler`).
+- `metric=ConstrainedObjective(fpr_ref, lam)`: `−(BER + lam·max(0, FPR − fpr_ref))`.
+- `greater_is_better=False` para pasar métricas de error (BER) sin invertir la optimización.
+- `threshold_strategy`: `None`, `"youden"`, `"fpr_current"` o un float (validación interna).
+- `history_` registra FPR, FNR y BER por evaluación; `history_frame()` lo devuelve como DataFrame.
+- `tuning_pso.py` acepta el `Agent` que devuelve mealpy ≥ 3.
+
+Nota: en los criterios híbridos solo importa la proporción `beta : (1 − beta)·alpha`,
+así que basta tunear uno de los dos.
+
+## 7. Cambios de comportamiento a tener en cuenta
+
+- `predict` usa la probabilidad **suavizada** (`laplace=1.0`) contra `threshold_=0.5`.
+  Con `laplace=0` se recupera la regla original de proporción en la hoja.
+- `PBCRETree(verbose=False)` por defecto, para no saturar la salida en el tuning.
+- `scoring="balanced"` cambia los splits respecto a la versión anterior.
+  Para reproducir resultados previos: `scoring="f1_weighted"` (hybrid_fast) o `"f1"` (hybrid).
+
+## 8. Experimento
+
+```bash
+python run_experiment.py --dataset NOMBRE --criterion hybrid_fast --repeats 3
+python run_experiment.py --dataset NOMBRE --smote
+python run_experiment.py --synthetic
+```
+
+Genera `results/resultados_folds.csv`, `results/resumen.csv` y `results/wilcoxon.csv`.
+
+La restricción de FPR se cumple en **validación**. En test puede variar un poco,
+sobre todo con validaciones pequeñas y árboles de pocas hojas (probabilidades discretas).
+Si necesita una garantía más estricta, use una cota algo menor que el FPR base
+(p. ej. `fpr_max = 0.8 * fpr_base`) o aumente la validación.
+
+## 9. Compatibilidad con pandas 3 (corrección posterior)
+
+En pandas 3 las columnas de texto tienen dtype `str` en lugar de `object`, así que:
+- `target` con valores `positive`/`negative` no se convertía a 0/1 (`ValueError: invalid literal for int()`).
+  Ahora `ProccessData.encode_target` normaliza el texto y usa `LABEL_MAP`; si aparece un valor
+  desconocido, el error lo indica explícitamente.
+- La detección de columnas categóricas usaba `select_dtypes(include="object")`.
+  Ahora `ProccessData.categorical_columns` toma todas las columnas no numéricas (pandas 2 y 3).
+- `run_experiment.py` indica la ruta absoluta esperada si no encuentra `dataset/NOMBRE.csv`.
+
+## 10. Control del error tipo I y hojas funcionales
+
+- `select_threshold(..., fnr_max=...)`, `fit_threshold(..., fnr_max=...)` y
+  `fit_cip_threshold(..., fnr_max=...)`: minimizan el **error tipo I** con el
+  error tipo II acotado (`"current"` también es válido). En el tuning:
+  `threshold_strategy="fnr_current"` o `("fnr", 0.2)`.
+- `smoothing="prior"`: m-estimate que encoge las hojas hacia el prior de
+  entrenamiento en vez de hacia 0.5.
+- `class_quantiles` ahora usa la clase **minoritaria** (antes, siempre la clase 1).
+- `leaf_model="logistic"` (`leaf_C`, `leaf_min_samples`): cada nodo con datos
+  suficientes ajusta una regresión logística y las hojas usan la de su ancestro
+  más cercano (estilo LMT). Las probabilidades son continuas dentro de la hoja.
+- `run_experiment.py`: variantes `prior_thr`, `np_fpr` (antes `np_current`),
+  `np_fnr`, `cips_youden`, `cips_np_fnr`; columna `auc`, número de hojas y
+  opciones `--fnr_max --smoothing --laplace --purity_mode --no_class_quantiles
+  --leaf_model --leaf_C --leaf_min_samples --no_cips`.
+
+Referencia en German Credit (5 folds, umbral `prior_thr`, criterio `hybrid_fast`):
+
+| Configuración | Hojas | AUC | FPR | FNR | BER |
+|---|---|---|---|---|---|
+| hojas constantes | 8.4 | 0.70 | 0.31 | 0.35 | 0.33 |
+| `--leaf_model logistic` | 4.4 | 0.76 | 0.31 | 0.29 | 0.30 |
+| `--leaf_model logistic --leaf_C 0.3 --leaf_min_samples 50` | 1.6 | 0.78 | 0.28 | 0.29 | 0.28 |
+
+La última configuración casi no deja patrones (equivale a una regresión logística global).
+
+## 11. Reporte en Excel
+
+`run_experiment.py` genera `<dataset>_<criterio>_<hojas>_<fecha>.xlsx` en `--out`
+(desactivar con `--no_excel`). Las métricas por fold se calculan con
+`ClassificationMetrics` (`srcc/pbcre/evaluation/excel_report.py`):
+
+- **Resumen**: media y desviación estándar por variante de Accuracy, Precision,
+  Recall, F1 (ponderados), MCC, AUC, error tipo I, error tipo II, BER y balanced
+  accuracy. Son fórmulas (`AVERAGEIFS`, `SUMPRODUCT`) sobre la hoja Folds.
+  La columna Folds indica cuántos folds tiene cada variante (las variantes de CIPs
+  se omiten en los folds donde la poda deja el árbol sin patrones).
+- **Folds**: una fila por fold y variante, con la matriz de confusión, el umbral y las hojas.
+- **Wilcoxon**: pruebas pareadas contra `base_0.5` para errores, accuracy, F1, MCC y AUC.
+- **Configuracion**: parámetros del experimento y definición de cada métrica.
+
+Requiere `openpyxl` (`pip install openpyxl`).
+
+## 12. Resultado final único y patrones (`run_final.py`)
+
+`run_experiment.py` sirve para COMPARAR estrategias (validación cruzada).
+`run_final.py` produce EL resultado final: un modelo, una evaluación en test.
+
+Protocolo 80/20 (objetivo por defecto: mínimo BER, `--strategy youden`):
+1. Partición estratificada fija: entrenamiento 80 % | test 20 % (`particion/train.csv`, `test.csv`).
+2. Dentro del 80 %:
+   - **Umbral**: CV interna de 5 folds (`--inner_folds`); el umbral se elige con las
+     probabilidades fuera de fold de las 800 instancias de entrenamiento.
+   - **Modelo final**: crece con el 80 % del entrenamiento, se poda con el 20 % restante
+     (`--prune_frac`) y luego `refit_leaves` reestima las hojas con todo el entrenamiento.
+   - La poda no deja menos de `--min_leaves` hojas (6 por defecto), para que el
+     árbol no colapse y se pierdan los patrones.
+3. Test: evaluación única.
+
+Remuestreo sólo con `--smote` (SMOTENC si hay categóricas). "Clase del patrón por lift"
+NO es remuestreo: indica que la clase de cada patrón es la que más se enriquece respecto
+a su proporción global.
+
+Si ningún patrón supera `--min_confidence` (0.55, confianza balanceada), se muestran los
+caminos de todas las hojas y se deja constancia en la hoja Configuracion.
+
+Excel `<dataset>_final_<fecha>.xlsx`: Resultado, Particion, Umbrales_OOF, Patrones, Hojas,
+Modelos_hoja, Instancias_test, Configuracion.
+
+Nuevos métodos del árbol: `refit_leaves(X, y)`, `leaf_paths()`,
+`leaf_model_coefficients(node, top)`, `simplify_path(path)`;
+`cost_complexity_pruning(..., min_leaves=)`.
+
+Ejemplos:
+```bash
+python run_final.py --dataset german
+python run_final.py --dataset german --smote
+python run_final.py --dataset german --min_leaves 4 --print_tree
+```
+
+German (mi copia pública, semilla 42): 8 hojas, 11 patrones, AUC test 0.786,
+error tipo I 0.217, error tipo II 0.300, BER 0.258. Con `--min_leaves 3`: 3 hojas,
+BER 0.300; el AUC fuera de fold fue prácticamente igual (0.779) en ambos casos.
+Un único split tiene mucha varianza: repórtelo junto con la media ± DE de la CV.
+
+## 13. Tabla de compromiso entre errores
+
+`run_final.py` imprime y guarda (hoja **Compromiso_OOF**) el menor error tipo I alcanzable
+para cada cota de error tipo II (0.10 … 0.30 y la de `--fnr_max`), calculado con las
+predicciones fuera de fold del entrenamiento. Sirve para elegir `--fnr_max` sin mirar el test.
+
+```bash
+python run_final.py --dataset german --strategy np_fnr --fnr_max 0.157
+```
+
+## 14. Matrices de confusión en `run_experiment.py`
+
+Tras el resumen se imprime, para cada variante, el bloque habitual: matriz de confusión
+acumulada (los folds de una repetición suman cada instancia una vez; se promedia entre
+repeticiones) y Accuracy, Precision, Recall, F1, MCC, errores tipo I y II, BER y AUC
+como media ± DE por fold. `--show_variants base_0.5,youden,np_fnr` limita las variantes.
+La hoja Resumen del Excel incluye la misma matriz (TN, FP, FN, TP) con fórmulas.
+También se acepta `--min_leaves`.
+
+## 15. Una sola matriz de confusión
+
+- `run_experiment.py` (validación cruzada) ya no imprime matrices: en CV no existe un único
+  test, y la matriz promediada daba valores decimales. Muestra la tabla de errores
+  (media ± DE) y, con `--show_variants`, las demás métricas.
+- `run_final.py` es el resultado oficial: una matriz de confusión entera sobre el test (20 %).
+  Antes imprime la tabla de decisión del umbral calculada sólo con el entrenamiento
+  (TN, FP, FN, TP enteros sobre las predicciones fuera de fold).
+
+## 16. Corrección en `twoing.py`
+
+Para variables categóricas el criterio `twoing` evaluaba `col <= thr` (orden alfabético),
+pero el árbol aplica `col == thr` al dividir y predecir: el split elegido no era el aplicado.
+Ahora usa igualdad para categóricas. No afecta a `hybrid_fast` (criterio por defecto).
+
+## 17. Configuración v1 por defecto
+
+`run_final.py` usa por defecto `--strategy np_fnr --fnr_max 0.157` (error tipo II al nivel
+de la versión 0). Ver `CONFIGURACION_V1.md` para el comando completo y el resultado de referencia.
+
+## 18. Umbral determinado por el algoritmo y tabla comparativa
+
+`run_final.py` ya no necesita un valor fijo de error tipo II:
+- `--strategy youden` (por defecto): mínimo BER.
+- `--strategy closest`: mínima distancia al clasificador perfecto, sqrt(error_I² + error_II²).
+- `--strategy np_fnr --fnr_max auto`: la cota de error II es la del clasificador con
+  umbral 0.5 (fuera de fold); se minimiza el error I sin perder sensibilidad.
+- `--fnr_max 0.157` sigue disponible para reproducir la configuración comparada con la v0.
+
+Cada ejecución agrega o actualiza una fila (por trabajo y dataset) en
+`<out>/comparacion_trabajos.xlsx` con las columnas
+trabajo, dataset, Accuracy, Precision, Recall, F1-Score, AUC, MCC, ErrorTipoI, ErrorTipoII,
+BER, TipoTrabajo. Por defecto `--trabajo "Our Proposal V2" --tipo_trabajo Propuesta`.
+Precision, Recall y F1 son de la clase positiva (`--summary_average binary`), como en las
+filas de referencia; `--summary_average weighted` usa los ponderados. Las filas añadidas a
+mano (otros trabajos) se conservan.
+
+## 19. Control del error tipo I y de ambos errores
+
+- `--fpr_max` (número o `auto`) para `--strategy np_fpr`: mínimo error II con error I acotado.
+  `auto` = error I del umbral 0.5; si los negativos son minoría (German) vale ~0.5 y restringe poco.
+- `--strategy minimax`: minimiza el mayor de los dos errores (automático).
+- `--strategy constrained --fpr_max X --fnr_max Y`: ambas cotas; entre los umbrales que las
+  cumplen fuera de fold elige el de menor BER. Si no hay ninguno, avisa y usa el que menos se pasa.
+- Se imprimen y guardan dos tablas: Compromiso A (cota de error II → menor error I) y
+  Compromiso B (cota de error I → menor error II), hojas `Compromiso_OOF` y `Compromiso_OOF_errorI`.
+
+## 20. Penalización L1 en las hojas
+
+`--leaf_penalty l1` (en `run_final.py` y `run_experiment.py`; parámetro `leaf_penalty` del
+árbol). En German (CV 5×2, dos semillas) `--leaf_penalty l1 --leaf_C 1.0` rinde igual que la
+configuración L2 por defecto (AUC 0.761 frente a 0.763), pero cada modelo de hoja usa entre 10
+y 41 de 61 variables (mediana 18), frente a 51–59 con L2. Las variables con coeficiente cero
+desaparecen de la hoja `Modelos_hoja` del Excel.
+
+Nota: con una sola semilla L1 parecía mejorar el AUC (0.762 frente a 0.751); con otra
+semilla el orden se invirtió. La diferencia de rendimiento es ruido; la de simplicidad no.
+
+## 21. Selección automática de la estrategia (`--strategy auto`)
+
+La mejor regla de umbral depende de la forma de la curva ROC de cada dataset, pero elegirla
+mirando el test invalida la evaluación. `--strategy auto` la elige sólo con el entrenamiento:
+sobre las predicciones fuera de fold repite 10 veces una CV de 5 partes; cada candidata elige su
+umbral con 4/5 y se evalúa en el 1/5 restante. Gana la de menor BER medio
+(`--auto_metric max_error` usa el mayor de los dos errores).
+
+- `--auto_candidates youden,minimax,np_fnr` (por defecto); `np_fnr` usa `--fnr_max`.
+- La tabla se imprime y se guarda en la hoja `Seleccion_estrategia`; la hoja Configuracion
+  registra p. ej. `auto -> minimax`.
+
+German (mi copia): youden tenía el menor BER sobre todas las predicciones fuera de fold (0.290),
+pero al validar su generalización quedó 2.º (0.308); minimax 1.º (0.295). Youden se sobreajusta
+al punto exacto de una curva con ruido.
+
+Uso recomendado para todos los datasets:
+python run_final.py --dataset NOMBRE --strategy auto --fnr_max 0.157 --trabajo "Our Proposal V2 (auto)"
+
+## 22. Encogimiento de las hojas hacia la raíz (`--leaf_shrinkage`, por defecto 600)
+
+Con `leaf_model="logistic"`, cada hoja ajusta su logística con una parte de los datos. Ahora
+se combina en escala logit con la logística de la raíz:
+z = w·z_hoja + (1 − w)·z_raíz, con w = n / (n + k), donde n son las instancias con que se
+ajustó el modelo de la hoja. Hojas pequeñas se apoyan en el modelo global; con muchos datos
+(p. ej. Default, ~24 000 instancias de entrenamiento) w ≈ 1 y el efecto es mínimo.
+
+German, CV de 5 folds con dos semillas (youden):
+
+| k | AUC (42) | AUC (7) | AUC medio | BER medio |
+|---|---|---|---|---|
+| 0 (antes) | 0.751 | 0.773 | 0.762 | 0.310 |
+| 150 | 0.776 | 0.785 | 0.781 | 0.286 |
+| 600 | 0.778 | 0.788 | 0.783 | 0.281 |
+
+Primer cambio con mejora consistente entre semillas; deja a PbCRPE al nivel de la regresión
+logística global (AUC ≈ 0.79) conservando los patrones. `--leaf_shrinkage 0` lo desactiva.
+
+## 23. Versión 4: minado de varios árboles
+
+Nuevo módulo `srcc/pbcre/ensemble/forest_miner.py` (`PBCREPatternForest`) y script
+`run_final_v4.py`. Ver `README_V4.md`.
